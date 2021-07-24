@@ -43,6 +43,7 @@
  **
  **| REV | YYYY.MM.DD | Autor           | Descripción de los cambios                              |
  **|-----|------------|-----------------|---------------------------------------------------------|
+ **|   5 | 2021.07.24 | evolentini      | Implementación con punteros separados y privilegios     |
  **|   4 | 2021.07.09 | evolentini      | Migracion del ejemplo a firmware CIAA V2                |
  **|   3 | 2017.10.16 | evolentini      | Correción en el formato del archivo                     |
  **|   2 | 2017.09.21 | evolentini      | Cambio para utilizar drivers_bm de UNER                 |
@@ -151,10 +152,12 @@ __attribute__((naked())) void SysTick_Handler(void)
     static int divisor = 0;
     static int activa = TASK_COUNT;
 
-    /* Se salva el contexto de la tarea activa en su correspondiente pila */
-    __asm__ volatile("push {r4-r11}");
-    __asm__ volatile("str r13, %0" : "=m"(context[activa]));
-    __asm__ volatile("ldr r13, %0" : : "m"(context[TASK_COUNT]));
+    /* Si hay una tarea activa se salva el contexto en su correspondiente pila */
+    if (activa != TASK_COUNT) {
+        __asm__ volatile("mrs r0, psp");
+        __asm__ volatile("stmdb r0!, {r4-r11}");
+        __asm__ volatile("str r0, %0" : "=m"(context[activa]));
+    }
 
     /* Se determina seleciona la proxima tarea que utilizará el procesador */
     activa = (activa + 1) % TASK_COUNT;
@@ -162,13 +165,20 @@ __attribute__((naked())) void SysTick_Handler(void)
     if (divisor == 0)
         gpioToggle(LEDB);
 
-    /* Se recupera el contexto de la nueva tarea desde su correspondiente pila */
-    __asm__ volatile("str r13, %0" : "=m"(context[TASK_COUNT]));
-    __asm__ volatile("ldr r13, %0" : : "m"(context[activa]));
-    __asm__ volatile("pop {r4-r11}");
+    /* Se recupera el contexto de la tarea a ejecutar desde su correspondiente pila */
+    __asm__ volatile("ldr r0, %0" : : "m"(context[activa]));
+    __asm__ volatile("ldmia r0!, {r4-r11}");
+    __asm__ volatile("msr psp, r0");
+    __asm__ volatile("isb");
+
+    /* Se configura el modo ejecución de la tarea como no privilegiado */
+    __asm__ volatile("mrs r0, control");
+    __asm__ volatile("orr r0, #1");
+    __asm__ volatile("msr control, r0");
+    __asm__ volatile("isb");
 
     /*  Se devuelve el uso del procesador a la tarea designada */
-    __asm__ volatile("ldr lr,=0xFFFFFFF9");
+    __asm__ volatile("ldr lr,=0xFFFFFFFD");
     __asm__ volatile("bx lr");
 }
 
